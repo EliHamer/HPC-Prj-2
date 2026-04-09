@@ -1,0 +1,53 @@
+#!/bin/bash
+#PBS -N gemm5way
+#PBS -A <project_allocation>
+#PBS -l select=1:system=polaris
+#PBS -l walltime=01:00:00
+#PBS -q preemptable
+#PBS -l filesystems=home:eagle
+
+set -euo pipefail
+cd "${PBS_O_WORKDIR}"
+
+mkdir -p results/raw report bin
+
+# Example module setup; adjust to your Polaris account environment.
+module purge
+module load PrgEnv-nvhpc
+module load cudatoolkit-standalone
+module load craype-accel-nvidia80
+module load python
+
+# Optional: activate venv with torch installed.
+# source /path/to/venv/bin/activate
+
+bash scripts/build_polaris.sh
+
+OUT_CSV="results/raw/runs_${PBS_JOBID}.csv"
+echo "version,n,repeat,end_to_end_s,h2d_s,compute_s,d2h_s,gflops_compute,max_abs_error" > "${OUT_CSV}"
+
+SIZES=(256 512 1024 2048 4096)
+REPEATS=5
+ITERS=5
+WARMUP=1
+
+for n in "${SIZES[@]}"; do
+  for r in $(seq 0 $((REPEATS - 1))); do
+    SEED=$((12345 + n + r))
+
+    ./bin/cpu_openmp --n="${n}" --iters="${ITERS}" --warmup="${WARMUP}" --repeat-id="${r}" --seed="${SEED}" >> "${OUT_CSV}"
+    ./bin/openacc_gemm --n="${n}" --iters="${ITERS}" --warmup="${WARMUP}" --repeat-id="${r}" --seed="${SEED}" >> "${OUT_CSV}"
+    ./bin/openmp_target_gemm --n="${n}" --iters="${ITERS}" --warmup="${WARMUP}" --repeat-id="${r}" --seed="${SEED}" >> "${OUT_CSV}"
+    ./bin/cuda_gemm --n="${n}" --iters="${ITERS}" --warmup="${WARMUP}" --repeat-id="${r}" --seed="${SEED}" >> "${OUT_CSV}"
+    python pytorch/torch_gemm.py --n="${n}" --iters="${ITERS}" --warmup="${WARMUP}" --repeat-id="${r}" --seed="${SEED}" >> "${OUT_CSV}"
+  done
+done
+
+python scripts/aggregate_results.py \
+  --input "${OUT_CSV}" \
+  --summary-csv results/summary_by_version_size.csv \
+  --report-md report/comparison.md
+
+echo "Sweep complete: ${OUT_CSV}"
+echo "Summary: results/summary_by_version_size.csv"
+echo "Report: report/comparison.md"
