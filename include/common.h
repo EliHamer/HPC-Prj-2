@@ -3,6 +3,10 @@
 
 #include <stddef.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef struct {
     int n;
     int iters;
@@ -33,5 +37,9 @@ void print_csv_line(
     int repeat_id,
     const GemmMetrics *metrics
 );
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif
