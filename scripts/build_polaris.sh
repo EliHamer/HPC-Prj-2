@@ -23,12 +23,24 @@ debug_log() {
 # Toolchain overrides (set these in your PBS script/environment as needed)
 : "${CPU_CC:=cc}"
 : "${OPENACC_CC:=nvc}"
-: "${OMPTARGET_CC:=clang}"
+: "${OMPTARGET_CC:=CC}"
 : "${NVCC:=nvcc}"
+: "${CUDA_PATH:=${CUDATOOLKIT_HOME:-}}"
+: "${OMP_GPU_ARCH:=sm_80}"
 
 #region agent log
 debug_log "pre-fix" "H1" "scripts/build_polaris.sh:24" "compiler_selection" "OMPTARGET_CC=${OMPTARGET_CC}"
 debug_log "pre-fix" "H2" "scripts/build_polaris.sh:25" "cwd_and_root" "PWD=${PWD};ROOT_DIR=${ROOT_DIR}"
+#endregion
+
+#region agent log
+if [[ -z "${CUDA_PATH}" ]]; then
+  if command -v "${NVCC}" >/dev/null 2>&1; then
+    CUDA_PATH="$(dirname "$(dirname "$(command -v "${NVCC}")")")"
+  fi
+fi
+debug_log "post-fix" "H6" "scripts/build_polaris.sh:34" "toolchain_paths" "CUDA_PATH=${CUDA_PATH};OMP_GPU_ARCH=${OMP_GPU_ARCH}"
+debug_log "post-fix" "H7" "scripts/build_polaris.sh:35" "compiler_probe" "which_omptarget=$(command -v "${OMPTARGET_CC}" 2>/dev/null || echo missing)"
 #endregion
 
 COMMON_SRC="${ROOT_DIR}/src/common.c"
@@ -44,13 +56,13 @@ echo "[build] OpenMP target -> ${BIN_DIR}/openmp_target_gemm"
 #region agent log
 debug_log "pre-fix" "H3" "scripts/build_polaris.sh:34" "omp_target_build_start" "target=nvptx64-nvidia-cuda"
 set +e
-"${OMPTARGET_CC}" -O3 -fopenmp -fopenmp-targets=nvptx64-nvidia-cuda ${INC} \
+"${OMPTARGET_CC}" -O3 -fopenmp -fopenmp-targets=nvptx64-nvidia-cuda -Xopenmp-target=nvptx64-nvidia-cuda --offload-arch="${OMP_GPU_ARCH}" --cuda-path="${CUDA_PATH}" ${INC} \
   "${ROOT_DIR}/src/openmp_target_gemm.c" "${COMMON_SRC}" -lm -o "${BIN_DIR}/openmp_target_gemm"
 omptarget_rc=$?
 set -e
-debug_log "pre-fix" "H4" "scripts/build_polaris.sh:40" "omp_target_build_rc" "rc=${omptarget_rc}"
+debug_log "post-fix" "H4" "scripts/build_polaris.sh:51" "omp_target_build_rc" "rc=${omptarget_rc}"
 if [[ "${omptarget_rc}" -ne 0 ]]; then
-  debug_log "pre-fix" "H5" "scripts/build_polaris.sh:42" "omp_target_build_failed" "likely_cuda_libdevice_or_arch_resolution_failure"
+  debug_log "post-fix" "H5" "scripts/build_polaris.sh:53" "omp_target_build_failed" "likely_cuda_libdevice_or_arch_resolution_failure"
   exit "${omptarget_rc}"
 fi
 #endregion
