@@ -55,13 +55,21 @@ echo "[build] OpenACC -> ${BIN_DIR}/openacc_gemm"
 echo "[build] OpenMP target -> ${BIN_DIR}/openmp_target_gemm"
 #region agent log
 debug_log "pre-fix" "H3" "scripts/build_polaris.sh:34" "omp_target_build_start" "target=nvptx64-nvidia-cuda"
+err_file="${ROOT_DIR}/.omptarget_build_stderr.txt"
+rm -f "${err_file}"
 set +e
 "${OMPTARGET_CC}" -O3 -fopenmp -fopenmp-targets=nvptx64-nvidia-cuda -Xopenmp-target=nvptx64-nvidia-cuda --offload-arch="${OMP_GPU_ARCH}" --cuda-path="${CUDA_PATH}" ${INC} \
-  "${ROOT_DIR}/src/openmp_target_gemm.c" "${COMMON_SRC}" -lm -o "${BIN_DIR}/openmp_target_gemm"
+  "${ROOT_DIR}/src/openmp_target_gemm.c" "${COMMON_SRC}" -lm -o "${BIN_DIR}/openmp_target_gemm" 2> "${err_file}"
 omptarget_rc=$?
 set -e
 debug_log "post-fix" "H4" "scripts/build_polaris.sh:51" "omp_target_build_rc" "rc=${omptarget_rc}"
 if [[ "${omptarget_rc}" -ne 0 ]]; then
+  if [[ -f "${err_file}" ]]; then
+    first_err="$(head -n 1 "${err_file}" | tr '"' "'" | tr -d '\r' | tr -d '\n')"
+    second_err="$(sed -n '2p' "${err_file}" | tr '"' "'" | tr -d '\r' | tr -d '\n')"
+    debug_log "post-fix" "H8" "scripts/build_polaris.sh:57" "omp_target_first_error_line" "${first_err}"
+    debug_log "post-fix" "H9" "scripts/build_polaris.sh:58" "omp_target_second_error_line" "${second_err}"
+  fi
   debug_log "post-fix" "H5" "scripts/build_polaris.sh:53" "omp_target_build_failed" "likely_cuda_libdevice_or_arch_resolution_failure"
   exit "${omptarget_rc}"
 fi
