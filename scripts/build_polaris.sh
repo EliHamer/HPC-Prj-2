@@ -43,6 +43,20 @@ debug_log "post-fix" "H6" "scripts/build_polaris.sh:34" "toolchain_paths" "CUDA_
 debug_log "post-fix" "H7" "scripts/build_polaris.sh:35" "compiler_probe" "which_omptarget=$(command -v "${OMPTARGET_CC}" 2>/dev/null || echo missing)"
 #endregion
 
+compiler_version="$("${OMPTARGET_CC}" --version 2>/dev/null | head -n 1 || true)"
+omptarget_flags=""
+#region agent log
+if echo "${compiler_version}" | grep -qi "nvc++"; then
+  # NVHPC OpenMP GPU offload flags.
+  omptarget_flags="-mp=gpu -gpu=cc80"
+  debug_log "post-fix" "H10" "scripts/build_polaris.sh:46" "omptarget_flag_mode" "mode=nvhpc;flags=${omptarget_flags}"
+else
+  # LLVM/Clang OpenMP offload flags.
+  omptarget_flags="-fopenmp -fopenmp-targets=nvptx64-nvidia-cuda -Xopenmp-target=nvptx64-nvidia-cuda --offload-arch=${OMP_GPU_ARCH} --cuda-path=${CUDA_PATH}"
+  debug_log "post-fix" "H10" "scripts/build_polaris.sh:50" "omptarget_flag_mode" "mode=clang;flags=${omptarget_flags}"
+fi
+#endregion
+
 COMMON_SRC="${ROOT_DIR}/src/common.c"
 INC="-I${ROOT_DIR}/include"
 
@@ -58,7 +72,7 @@ debug_log "pre-fix" "H3" "scripts/build_polaris.sh:34" "omp_target_build_start" 
 err_file="${ROOT_DIR}/.omptarget_build_stderr.txt"
 rm -f "${err_file}"
 set +e
-"${OMPTARGET_CC}" -O3 -fopenmp -fopenmp-targets=nvptx64-nvidia-cuda -Xopenmp-target=nvptx64-nvidia-cuda --offload-arch="${OMP_GPU_ARCH}" --cuda-path="${CUDA_PATH}" ${INC} \
+"${OMPTARGET_CC}" -O3 ${omptarget_flags} ${INC} \
   "${ROOT_DIR}/src/openmp_target_gemm.c" "${COMMON_SRC}" -lm -o "${BIN_DIR}/openmp_target_gemm" 2> "${err_file}"
 omptarget_rc=$?
 set -e
