@@ -109,6 +109,25 @@ fi
 #endregion
 
 echo "[build] CUDA -> ${BIN_DIR}/cuda_gemm"
-"${NVCC}" -O3 ${INC} "${ROOT_DIR}/src/cuda_gemm.cu" "${COMMON_SRC}" -o "${BIN_DIR}/cuda_gemm"
+#region agent log
+cuda_err_file="${ROOT_DIR}/.cuda_build_stderr.txt"
+rm -f "${cuda_err_file}"
+set +e
+"${NVCC}" -O3 ${INC} "${ROOT_DIR}/src/cuda_gemm.cu" "${COMMON_SRC}" -o "${BIN_DIR}/cuda_gemm" 2> "${cuda_err_file}"
+cuda_rc=$?
+set -e
+debug_log "post-fix" "H12" "scripts/build_polaris.sh:111" "cuda_build_rc" "rc=${cuda_rc}"
+if [[ "${cuda_rc}" -ne 0 ]]; then
+  if [[ -f "${cuda_err_file}" ]]; then
+    c1="$(head -n 1 "${cuda_err_file}" | tr '"' "'" | tr -d '\r' | tr -d '\n')"
+    c2="$(sed -n '2p' "${cuda_err_file}" | tr '"' "'" | tr -d '\r' | tr -d '\n')"
+    c3="$(sed -n '3p' "${cuda_err_file}" | tr '"' "'" | tr -d '\r' | tr -d '\n')"
+    debug_log "post-fix" "H13" "scripts/build_polaris.sh:117" "cuda_stderr_line1" "${c1}"
+    debug_log "post-fix" "H14" "scripts/build_polaris.sh:118" "cuda_stderr_line2" "${c2}"
+    debug_log "post-fix" "H15" "scripts/build_polaris.sh:119" "cuda_stderr_line3" "${c3}"
+  fi
+  exit "${cuda_rc}"
+fi
+#endregion
 
 echo "[build] done"
