@@ -27,6 +27,7 @@ debug_log() {
 : "${NVCC:=nvcc}"
 : "${CUDA_PATH:=${CUDATOOLKIT_HOME:-}}"
 : "${OMP_GPU_ARCH:=sm_80}"
+: "${OMPTARGET_FLAVOR:=auto}"
 
 #region agent log
 debug_log "pre-fix" "H1" "scripts/build_polaris.sh:24" "compiler_selection" "OMPTARGET_CC=${OMPTARGET_CC}"
@@ -43,18 +44,28 @@ debug_log "post-fix" "H6" "scripts/build_polaris.sh:34" "toolchain_paths" "CUDA_
 debug_log "post-fix" "H7" "scripts/build_polaris.sh:35" "compiler_probe" "which_omptarget=$(command -v "${OMPTARGET_CC}" 2>/dev/null || echo missing)"
 #endregion
 
-compiler_version="$("${OMPTARGET_CC}" --version 2>/dev/null | head -n 1 || true)"
-omptarget_flags=""
+omptarget_flags_nvhpc="-mp=gpu -gpu=cc80"
+omptarget_flags_clang="-fopenmp -fopenmp-targets=nvptx64-nvidia-cuda -Xopenmp-target=nvptx64-nvidia-cuda --offload-arch=${OMP_GPU_ARCH} --cuda-path=${CUDA_PATH}"
+omptarget_flags_first=""
+omptarget_flags_fallback=""
 #region agent log
-if echo "${compiler_version}" | grep -qi "nvc++"; then
-  # NVHPC OpenMP GPU offload flags.
-  omptarget_flags="-mp=gpu -gpu=cc80"
-  debug_log "post-fix" "H10" "scripts/build_polaris.sh:46" "omptarget_flag_mode" "mode=nvhpc;flags=${omptarget_flags}"
+if [[ "${OMPTARGET_FLAVOR}" == "nvhpc" ]]; then
+  omptarget_flags_first="${omptarget_flags_nvhpc}"
+  omptarget_flags_fallback="${omptarget_flags_clang}"
+elif [[ "${OMPTARGET_FLAVOR}" == "clang" ]]; then
+  omptarget_flags_first="${omptarget_flags_clang}"
+  omptarget_flags_fallback="${omptarget_flags_nvhpc}"
 else
-  # LLVM/Clang OpenMP offload flags.
-  omptarget_flags="-fopenmp -fopenmp-targets=nvptx64-nvidia-cuda -Xopenmp-target=nvptx64-nvidia-cuda --offload-arch=${OMP_GPU_ARCH} --cuda-path=${CUDA_PATH}"
-  debug_log "post-fix" "H10" "scripts/build_polaris.sh:50" "omptarget_flag_mode" "mode=clang;flags=${omptarget_flags}"
+  # Auto mode: CC wrapper on Polaris commonly routes to nvc++, so try NVHPC first.
+  if [[ "${OMPTARGET_CC}" == "CC" || "${OMPTARGET_CC}" == */CC ]]; then
+    omptarget_flags_first="${omptarget_flags_nvhpc}"
+    omptarget_flags_fallback="${omptarget_flags_clang}"
+  else
+    omptarget_flags_first="${omptarget_flags_clang}"
+    omptarget_flags_fallback="${omptarget_flags_nvhpc}"
+  fi
 fi
+debug_log "post-fix" "H10" "scripts/build_polaris.sh:64" "omptarget_flag_strategy" "flavor=${OMPTARGET_FLAVOR};first=${omptarget_flags_first};fallback=${omptarget_flags_fallback}"
 #endregion
 
 COMMON_SRC="${ROOT_DIR}/src/common.c"
@@ -72,9 +83,17 @@ debug_log "pre-fix" "H3" "scripts/build_polaris.sh:34" "omp_target_build_start" 
 err_file="${ROOT_DIR}/.omptarget_build_stderr.txt"
 rm -f "${err_file}"
 set +e
-"${OMPTARGET_CC}" -O3 ${omptarget_flags} ${INC} \
+"${OMPTARGET_CC}" -O3 ${omptarget_flags_first} ${INC} \
   "${ROOT_DIR}/src/openmp_target_gemm.c" "${COMMON_SRC}" -lm -o "${BIN_DIR}/openmp_target_gemm" 2> "${err_file}"
 omptarget_rc=$?
+if [[ "${omptarget_rc}" -ne 0 ]]; then
+  if grep -qi "Unknown switch" "${err_file}" 2>/dev/null; then
+    debug_log "post-fix" "H11" "scripts/build_polaris.sh:78" "omptarget_retry" "retry_with_fallback_flags"
+    "${OMPTARGET_CC}" -O3 ${omptarget_flags_fallback} ${INC} \
+      "${ROOT_DIR}/src/openmp_target_gemm.c" "${COMMON_SRC}" -lm -o "${BIN_DIR}/openmp_target_gemm" 2> "${err_file}"
+    omptarget_rc=$?
+  fi
+fi
 set -e
 debug_log "post-fix" "H4" "scripts/build_polaris.sh:51" "omp_target_build_rc" "rc=${omptarget_rc}"
 if [[ "${omptarget_rc}" -ne 0 ]]; then
